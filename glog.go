@@ -43,6 +43,8 @@
 //		Logs are written to standard error instead of to files.
 //	-alsologtostderr=false
 //		Logs are written to standard error as well as to files.
+//	-toChannel=false
+//		Logs are written to custom buffered channel.
 //	-stderrthreshold=ERROR
 //		Log events at or above this severity are logged to standard
 //		error as well as to files.
@@ -398,6 +400,7 @@ type flushSyncWriter interface {
 func init() {
 	flag.BoolVar(&logging.toStderr, "logtostderr", false, "log to standard error instead of files")
 	flag.BoolVar(&logging.alsoToStderr, "alsologtostderr", false, "log to standard error as well as files")
+	flag.BoolVar(&logging.toChannel, "toChannel", false, "send logs to custom channel")
 	flag.Var(&logging.verbosity, "v", "log level for V logs")
 	flag.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr")
 	flag.Var(&logging.vmodule, "vmodule", "comma-separated list of pattern=N settings for file-filtered logging")
@@ -422,6 +425,7 @@ type loggingT struct {
 	// compatibility. TODO: does this matter enough to fix? Seems unlikely.
 	toStderr     bool // The -logtostderr flag.
 	alsoToStderr bool // The -alsologtostderr flag.
+	toChannel    bool // The -channel flag.
 
 	// Level flag. Handled atomically.
 	stderrThreshold severity // The -stderrthreshold flag.
@@ -451,8 +455,9 @@ type loggingT struct {
 	traceLocation traceLocation
 	// These flags are modified only under lock, although verbosity may be fetched
 	// safely using atomic.LoadInt32.
-	vmodule   moduleSpec // The state of the -vmodule flag.
-	verbosity Level      // V logging level, the value of the -v flag/
+	vmodule   moduleSpec  // The state of the -vmodule flag.
+	verbosity Level       // V logging level, the value of the -v flag/
+	logs      chan []byte // custom channel
 }
 
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
@@ -676,6 +681,10 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		}
 	}
 	data := buf.Bytes()
+	if l.toChannel && l.logs != nil {
+		l.logs <- data
+	}
+
 	if l.toStderr {
 		os.Stderr.Write(data)
 	} else {
@@ -1174,4 +1183,14 @@ func Exitln(args ...interface{}) {
 func Exitf(format string, args ...interface{}) {
 	atomic.StoreUint32(&fatalNoStacks, 1)
 	logging.printf(fatalLog, format, args...)
+}
+
+// SetChannel sets channel to which logs should be send
+func SetChannel(logs chan []byte) {
+	logging.logs = logs
+}
+
+// CustomChannel returns info if logging to custom channel is enabled
+func CustomChannel() bool {
+	return logging.toChannel
 }
